@@ -74,6 +74,16 @@ class _fuckit(types.ModuleType):
                                                 body=[ast.Pass()])],
                     orelse=[]), node)
             return node
+        
+    def __init__(self, *args, **kw):
+        types.ModuleType.__init__(self, *args, **kw)
+        self.managed_block = None
+        
+    def get_exc_lineno(self, exc):
+        import traceback
+        import sys
+        extracted_ln = traceback.extract_tb(sys.exc_info()[2])[-1][1]
+        return getattr(exc, 'lineno', extracted_ln)
     
     def __call__(self, victim):
         """Steamroll errors.
@@ -86,7 +96,6 @@ class _fuckit(types.ModuleType):
         import ast
         import types
         import sys
-        import traceback
         import functools
         import re
         
@@ -103,8 +112,7 @@ class _fuckit(types.ModuleType):
                     sys.modules[victim] = module
                     exec code in module.__dict__
                 except Exception as exc:
-                    extracted_ln = traceback.extract_tb(sys.exc_info()[2])[-1][1]
-                    lineno = getattr(exc, 'lineno', extracted_ln)
+                    lineno = self.get_exc_lineno(exc)
                     lines = source.splitlines()
                     del lines[lineno - 1]
                     source = '\n'.join(lines)
@@ -154,14 +162,42 @@ class _fuckit(types.ModuleType):
         return victim
     
     def __enter__(self):
-        return None
-    
-    def __exit__(self, exc_type, exc_value, traceback):
+        import inspect
+        import ast
+        self.managed_block = None
+        _, filename, lineno, _, _, _ = inspect.stack()[1]
+        try:
+            with open(filename) as f:
+                source = f.read()
+        except IOError:
+            pass
+        else:
+            tree = ast.parse(source)
+            for node in ast.walk(tree):
+                if getattr(node, 'lineno', -1) == lineno:
+                    self.managed_block = node
+                    return
+            
+    def __exit__(self, exc_type, exc_value, tb):
+        import ast
+        import inspect
         # Returning True prevents the error from propagating. Don't silence
         # KeyboardInterrupt or SystemExit. We aren't monsters.
-        return issubclass(exc_type, Exception)
-    
-    
+        if exc_type is not None and issubclass(exc_type, Exception):
+            if self.managed_block is not None:
+                exc_lineno = self.get_exc_lineno(exc_value)
+                for i, node in enumerate(self.managed_block.body):
+                    if node.lineno > exc_lineno:
+                        remaining_tree = ast.Module()
+                        remaining_tree.body = self.managed_block.body[i:]
+                        remaining_tree = self._Fucker().visit(remaining_tree)
+                        ast.fix_missing_locations(remaining_tree)
+                        code = compile(remaining_tree, '', 'exec')
+                        caller_frame = inspect.stack()[1][0]
+                        exec code in caller_frame.f_globals, caller_frame.f_locals
+                        return True
+            return True
+        return False
     
 sys.modules[__name__] = _fuckit('fuckit', __doc__)
     

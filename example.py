@@ -13,13 +13,15 @@ class BrokenClass(object):
         self.black_hole = 1 / 0
         return 'Class decorator works'
     
-with fuckit:
-    print 'Context manager works'
-    raise RuntimeError()
+var = 'Context manager'
+def broken_context_manager_function():
+    with fuckit:
+        asd
+        return var + ' works'
     
 print broken_function()
+print broken_context_manager_function()
 print BrokenClass().f()
-broke.f()
 print broke.var
 
 
